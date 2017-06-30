@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"runtime"
-	"strconv"
 
 	"github.com/ernestio/ernest-cli/helper"
 	"github.com/ernestio/ernest-cli/model"
@@ -34,22 +33,6 @@ func (m *Manager) ListServices(token string) (services []model.Service, err erro
 	return services, err
 }
 
-// ListBuilds ...
-func (m *Manager) ListBuilds(name string, token string) (builds []model.Service, err error) {
-	body, resp, err := m.doRequest("/api/services/"+name+"/builds/", "GET", []byte(""), token, "")
-	if err != nil {
-		if resp == nil {
-			return nil, CONNECTIONREFUSED
-		}
-		return nil, err
-	}
-	err = json.Unmarshal([]byte(body), &builds)
-	if err != nil {
-		return nil, err
-	}
-	return builds, err
-}
-
 // ServiceStatus ...
 func (m *Manager) ServiceStatus(token string, serviceName string) (service model.Service, err error) {
 	body, resp, err := m.doRequest("/api/services/"+serviceName, "GET", []byte(""), token, "")
@@ -62,39 +45,6 @@ func (m *Manager) ServiceStatus(token string, serviceName string) (service model
 		}
 		if resp.StatusCode == 404 {
 			return service, errors.New("Specified service name does not exist")
-		}
-		return service, err
-	}
-	if body == "null" {
-		return service, errors.New("Unexpected endpoint response : " + string(body))
-	}
-	err = json.Unmarshal([]byte(body), &service)
-	if err != nil {
-		return service, err
-	}
-	return service, nil
-}
-
-// ServiceBuildStatus ...
-func (m *Manager) ServiceBuildStatus(token string, serviceName string, serviceID string) (service model.Service, err error) {
-	builds, _ := m.ListBuilds(serviceName, token)
-	num, _ := strconv.Atoi(serviceID)
-	if num < 1 || num > len(builds) {
-		return service, errors.New("Invalid build ID")
-	}
-	num = len(builds) - num
-	serviceID = builds[num].ID
-
-	body, resp, err := m.doRequest("/api/services/"+serviceName+"/builds/"+serviceID, "GET", []byte(""), token, "")
-	if err != nil {
-		if resp == nil {
-			return service, CONNECTIONREFUSED
-		}
-		if resp.StatusCode == 403 {
-			return service, errors.New("You don't have permissions to perform this action")
-		}
-		if resp.StatusCode == 404 {
-			return service, errors.New("Specified build not found")
 		}
 		return service, err
 	}
@@ -149,22 +99,7 @@ func (m *Manager) RevertService(name string, buildID string, token string, dry b
 	}
 
 	if dry {
-		var body string
-		body, resp, err := m.doRequest("/api/services/?dry=true", "POST", payload, token, "application/yaml")
-		if err != nil {
-			if resp == nil {
-				return "", CONNECTIONREFUSED
-			}
-			var internalError struct {
-				Message string `json:"message"`
-			}
-			if err := json.Unmarshal([]byte(body), &internalError); err != nil {
-				return "", errors.New(body)
-			}
-			return "", errors.New(internalError.Message)
-		}
-		view.ServiceDry(body)
-		return "", nil
+		return m.dryApply(token, payload)
 	}
 
 	color.Green("Reverting service...")
@@ -274,22 +209,7 @@ func (m *Manager) Apply(token string, path string, monit, dry bool) (string, err
 	}
 
 	if dry {
-		var body string
-		body, resp, err := m.doRequest("/api/services/?dry=true", "POST", payload, token, "application/yaml")
-		if err != nil {
-			if resp == nil {
-				return "", CONNECTIONREFUSED
-			}
-			var internalError struct {
-				Message string `json:"message"`
-			}
-			if err := json.Unmarshal([]byte(body), &internalError); err != nil {
-				return "", errors.New(body)
-			}
-			return "", errors.New(internalError.Message)
-		}
-		view.ServiceDry(body)
-		return "", nil
+		return m.dryApply(token, payload)
 	}
 
 	color.Green("Environment creation requested")
@@ -363,4 +283,37 @@ func (m *Manager) Import(token string, name string, datacenter string, filters [
 	runtime.Goexit()
 
 	return streamID, nil
+}
+
+// ServiceSync : will call remote /api/services/<myservice/sync
+func (m *Manager) ServiceSync(token string, name string) (string, error) {
+	body, resp, err := m.doRequest("/api/services/"+name+"/sync/", "POST", []byte(""), token, "application/yaml")
+	if err != nil {
+		if resp == nil {
+			return "", CONNECTIONREFUSED
+		}
+		return "", errors.New(body)
+	}
+	runtime.Goexit()
+
+	return body, nil
+}
+
+func (m *Manager) dryApply(token string, payload []byte) (string, error) {
+	var body string
+	body, resp, err := m.doRequest("/api/services/?dry=true", "POST", payload, token, "application/yaml")
+	if err != nil {
+		if resp == nil {
+			return "", CONNECTIONREFUSED
+		}
+		var internalError struct {
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(body), &internalError); err != nil {
+			return "", errors.New(body)
+		}
+		return "", errors.New(internalError.Message)
+	}
+	view.ServiceDry(body)
+	return "", nil
 }

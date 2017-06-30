@@ -6,6 +6,7 @@ package command
 
 // CmdDatacenter subcommand
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -420,6 +421,132 @@ var DiffService = cli.Command{
 	},
 }
 
+// SyncService : Will sync a service with its remote provider resources
+var SyncService = cli.Command{
+	Name:      "sync",
+	ArgsUsage: "<service_name>",
+	Usage:     "$ ernest service sync <my_service>",
+	Description: `Will synchronize <my_service> with the remote provider resources
+
+   Examples:
+    $ ernest service sync my_service
+	`,
+	Action: func(c *cli.Context) error {
+		var err error
+
+		m, cfg := setup(c)
+		if cfg.Token == "" {
+			color.Red("You're not allowed to perform this action, please log in")
+			return nil
+		}
+
+		if len(c.Args()) == 0 {
+			color.Red("You should specify an existing service name")
+			return nil
+		}
+
+		name := c.Args()[0]
+		_, err = m.ServiceSync(cfg.Token, name)
+
+		if err != nil {
+			color.Red(err.Error())
+			os.Exit(1)
+		}
+
+		return nil
+	},
+}
+
+// ResolveService : Resolve a service
+var ResolveService = cli.Command{
+	Name:      "resolve",
+	ArgsUsage: "<service_name>",
+	Usage:     "$ ernest service resolve <my_service>",
+	Description: `Will resolve conflicts on a specific service
+
+		Examples:
+		 $ ernest service resolve <my_service>
+	`,
+	Action: func(c *cli.Context) error {
+		var err error
+
+		m, cfg := setup(c)
+		if cfg.Token == "" {
+			color.Red("You're not allowed to perform this action, please log in")
+			return nil
+		}
+
+		if len(c.Args()) == 0 {
+			color.Red("You should specify an existing service name")
+			return nil
+		}
+
+		name := c.Args()[0]
+		builds, err := m.ListBuilds(name, cfg.Token)
+		if err != nil {
+			color.Red(err.Error())
+			return nil
+		}
+
+		if builds[len(builds)-1].Status != "pending_user_input" {
+			fmt.Println("No changes detected on this service")
+			return nil
+		}
+
+		fmt.Println("Changes detected!")
+		fmt.Println("")
+		fmt.Println("------- DETECTED CHANGES HERE -------")
+		fmt.Println("")
+		fmt.Println("Please select an action")
+		fmt.Println(" 1 .- Sync provider environment with last known ernest state")
+		fmt.Println(" 2 .- Update ernest state with environment changes")
+		fmt.Println(" 3 .- Ignore environment changes")
+		fmt.Println(" 4 .- Skip this by now")
+
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Print(" ... ")
+		opt, _ := reader.ReadString('\n')
+		if err != nil {
+			color.Red(err.Error())
+			return nil
+		} else if opt == "4" {
+			fmt.Println("Skipping by now. Changes on this service will need to be resolved before any interaction.")
+			return nil
+		}
+		if opt == "3" || opt == "1" {
+			if err != nil {
+				color.Red(err.Error())
+				return nil
+			}
+			err = m.DelBuild(cfg.Token, name, builds[len(builds)-1].ID)
+			if err != nil {
+				color.Red(err.Error())
+				return nil
+			}
+			if opt == "1" {
+				_, err := m.RevertService(name, builds[len(builds)-2].ID, cfg.Token, false)
+				if err != nil {
+					color.Red(err.Error())
+					return nil
+				}
+			}
+			return nil
+		}
+		if opt == "2" {
+			if err = m.ResetService(name, cfg.Token); err != nil {
+				color.Red(err.Error())
+				return nil
+			}
+			return nil
+		}
+
+		return nil
+
+	},
+}
+
+//	SyncPreferences,
+
 // ImportService : Shows detailed information of a service by its name
 var ImportService = cli.Command{
 	Name:      "import",
@@ -521,5 +648,7 @@ var CmdService = cli.Command{
 		MonitorService,
 		DiffService,
 		ImportService,
+		SyncService,
+		// SyncPreferences,
 	},
 }
